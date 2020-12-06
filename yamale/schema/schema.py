@@ -1,10 +1,7 @@
-import sys
 from .datapath import DataPath
+from .validationresults import ValidationResult
 from .. import syntax, util
 from .. import validators as val
-
-# Fix Python 2.x.
-PY2 = sys.version_info[0] == 2
 
 
 class Schema(object):
@@ -12,6 +9,7 @@ class Schema(object):
     Makes a Schema object from a schema dict.
     Still acts like a dict.
     """
+
     def __init__(self, schema_dict, name='', validators=None, includes=None):
         self.validators = validators or val.DefaultValidators
         self.dict = schema_dict
@@ -55,14 +53,7 @@ class Schema(object):
     def validate(self, data, data_name, strict):
         path = DataPath()
         errors = self._validate(self._schema, data, path, strict)
-
-        if errors:
-            header = '\nError validating data %s with schema %s' % (data_name,
-                                                                    self.name)
-            error_str = header + '\n\t' + '\n\t'.join(errors)
-            if PY2:
-                error_str = error_str.encode('utf-8')
-            raise ValueError(error_str)
+        return ValidationResult(data_name, self.name, errors)
 
     def _validate_item(self, validator, data, path, strict, key):
         """
@@ -74,7 +65,7 @@ class Schema(object):
         path = path + DataPath(key)
         try:  # Pull value out of data. Data can be a map or a list/sequence
             data_item = data[key]
-        except KeyError:  # Oops, that field didn't exist.
+        except (KeyError, IndexError):  # Oops, that field didn't exist.
             # Optional? Who cares.
             if isinstance(validator, val.Validator) and validator.is_optional:
                 return errors
@@ -177,11 +168,10 @@ class Schema(object):
                                         strict)
 
     def _validate_any(self, validator, data, path, strict):
-        errors = []
-
         if not validator.validators:
-            errors.append('No validators specified for "any".')
-            return errors
+            return []
+
+        errors = []
 
         sub_errors = []
         for v in validator.validators:

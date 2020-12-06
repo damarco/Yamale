@@ -1,7 +1,9 @@
 from __future__ import absolute_import
 import datetime
+import ipaddress
 
 from yamale.util import to_unicode
+from .base import Validator
 
 
 class Constraint(object):
@@ -85,7 +87,7 @@ class Max(Constraint):
 
 class LengthMin(Constraint):
     keywords = {'min': int}
-    fail = 'Length of %s is less than than %s'
+    fail = 'Length of %s is less than %s'
 
     def _is_valid(self, value):
         return self.min <= len(value)
@@ -103,6 +105,23 @@ class LengthMax(Constraint):
 
     def _fail(self, value):
         return self.fail % (value, self.max)
+
+
+class Key(Constraint):
+    keywords = {'key': Validator}
+    fail = 'Key error - %s'
+
+    def _is_valid(self, value):
+        for k in value.keys():
+            if self.key.validate(k) != []:
+                return False
+        return True
+
+    def _fail(self, value):
+        error_list = []
+        for k in value.keys():
+            error_list.extend(self.key.validate(k))
+        return [self.fail % (e) for e in error_list]
 
 
 class CharacterExclude(Constraint):
@@ -125,10 +144,6 @@ class IpVersion(Constraint):
     fail = 'IP version of %s is not %s'
 
     def _is_valid(self, value):
-        try:
-            import ipaddress
-        except ImportError:
-            raise ImportError("You must install the ipaddress backport in Py2")
         try:
             ip = ipaddress.ip_interface(to_unicode(value))
         except ValueError:

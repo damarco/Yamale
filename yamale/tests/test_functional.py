@@ -1,4 +1,6 @@
+import io
 import pytest
+import re
 import yamale
 
 from . import get_fixture
@@ -121,6 +123,32 @@ nested_map2 = {
     'bad': 'nested_map2_bad.yaml'
 }
 
+static_list = {
+    'schema': 'static_list.yaml',
+    'good': 'static_list_good.yaml',
+    'bad': 'static_list_bad.yaml'
+}
+
+nested_issue_54 = {
+    'schema': 'nested.yaml',
+    'bad': 'nested_issue_54.yaml',
+    'good': 'nested_good_data.yaml'
+}
+
+map_key_constraint = {
+    'schema': 'map_key_constraint.yaml',
+    'good': 'map_key_constraint_good.yaml',
+    'bad_base': 'map_key_constraint_bad_base.yaml',
+    'bad_nest': 'map_key_constraint_bad_nest.yaml',
+    'bad_nest_con': 'map_key_constraint_bad_nest_con.yaml',
+}
+
+numeric_bool_coercion = {
+    'schema': 'numeric_bool_coercion.yaml',
+    'good': 'numeric_bool_coercion_good.yaml',
+    'bad': 'numeric_bool_coercion_bad.yaml',
+}
+
 test_data = [
     types, nested, custom,
     keywords, lists, maps,
@@ -129,7 +157,10 @@ test_data = [
     nested_map, top_level_map,
     include_validator, strict_map,
     mixed_strict_map, strict_list,
-    nested_map2
+    nested_map2, static_list,
+    nested_issue_54,
+    map_key_constraint,
+    numeric_bool_coercion,
 ]
 
 for d in test_data:
@@ -162,39 +193,53 @@ def test_good(data_map):
 
 
 def test_bad_validate():
-    assert count_exception_lines(types['schema'], types['bad']) == 11
+    assert count_exception_lines(types['schema'], types['bad']) == 9
 
 
 def test_bad_nested():
-    assert count_exception_lines(nested['schema'], nested['bad']) == 4
+    assert count_exception_lines(nested['schema'], nested['bad']) == 2
+
+
+def test_bad_nested_issue_54():
+    exp = [
+        'string: Required field missing',
+        'number: Required field missing',
+        'integer: Required field missing',
+        'boolean: Required field missing',
+        'date: Required field missing',
+        'datetime: Required field missing',
+        'nest: Required field missing',
+        'list: Required field missing'
+    ]
+    match_exception_lines(nested_issue_54['schema'], nested_issue_54['bad'], exp)
 
 
 def test_bad_custom():
-    assert count_exception_lines(custom['schema'], custom['bad']) == 3
+    assert count_exception_lines(custom['schema'], custom['bad']) == 1
 
 
 def test_bad_lists():
-    assert count_exception_lines(lists['schema'], lists['bad']) == 6
+    assert count_exception_lines(lists['schema'], lists['bad']) == 4
 
 
 def test_bad2_lists():
-    assert count_exception_lines(lists['schema'], lists['bad2']) == 3
+    assert count_exception_lines(lists['schema'], lists['bad2']) == 1
 
 
 def test_bad_maps():
-    assert count_exception_lines(maps['schema'], maps['bad']) == 6
+    assert count_exception_lines(maps['schema'], maps['bad']) == 4
 
 
 def test_bad_keywords():
-    assert count_exception_lines(keywords['schema'], keywords['bad']) == 10
+    assert count_exception_lines(keywords['schema'], keywords['bad']) == 8
 
 
 def test_bad_anys():
-    assert count_exception_lines(anys['schema'], anys['bad']) == 7
+    assert count_exception_lines(anys['schema'], anys['bad']) == 5
 
 
 def test_bad_regexes():
-    assert count_exception_lines(regexes['schema'], regexes['bad']) == 9
+    assert count_exception_lines(regexes['schema'], regexes['bad']) == 4
 
 
 def test_bad_include_validator():
@@ -210,8 +255,14 @@ def test_bad_schema():
     assert 'fixtures/bad_schema.yaml' in str(excinfo.value)
 
 
+def test_empty_schema():
+    with pytest.raises(ValueError) as excinfo:
+        yamale.make_schema(get_fixture('empty_schema.yaml'))
+    assert 'empty_schema.yaml is an empty file!' in str(excinfo.value)
+
+
 def test_list_is_not_a_map():
-    exp = [": '[1, 2]' is not a map"]
+    exp = [" : '[1, 2]' is not a map"]
     match_exception_lines(strict_map['schema'],
                           strict_list['good'],
                           exp)
@@ -247,22 +298,87 @@ def test_bad_nested_map2():
                           exp)
 
 
+def test_bad_static_list():
+    exp = ['0: Required field missing']
+    match_exception_lines(static_list['schema'],
+                          static_list['bad'],
+                          exp)
+
+
+def test_bad_map_key_constraint_base():
+    exp = [": Key error - 'bad' is not a int."]
+    match_exception_lines(map_key_constraint['schema'],
+                          map_key_constraint['bad_base'],
+                          exp)
+
+
+def test_bad_map_key_constraint_nest():
+    exp = ["1.0: Key error - '100' is not a str."]
+    match_exception_lines(map_key_constraint['schema'],
+                          map_key_constraint['bad_nest'],
+                          exp)
+
+
+def test_bad_map_key_constraint_nest_con():
+    exp = [
+        "1.0: Key error - '100' is not a str.",
+        "1.0: Key error - 'baz' contains excluded character 'z'",
+    ]
+    match_exception_lines(map_key_constraint['schema'],
+                          map_key_constraint['bad_nest_con'],
+                          exp)
+
+
+def test_bad_numeric_bool_coercion():
+    exp = [
+        "integers.0: 'False' is not a int.",
+        "integers.1: 'True' is not a int.",
+        "numbers.0: 'False' is not a num.",
+        "numbers.1: 'True' is not a num.",
+    ]
+    match_exception_lines(numeric_bool_coercion['schema'],
+                          numeric_bool_coercion['bad'],
+                          exp)
+
+@pytest.mark.parametrize("use_schema_string,use_data_string,expected_message_re", [
+    (False, False, "^Error validating data '.*?' with schema '.*?'\n\t"),
+    (True, False, "^Error validating data '.*?'\n\t"),
+    (False, True, "^Error validating data with schema '.*?'\n\t"),
+    (True, True, "^Error validating data\n\t"),
+])
+def test_validate_errors(use_schema_string, use_data_string, expected_message_re):
+    schema_path = get_fixture('types.yaml')
+    data_path = get_fixture('types_bad_data.yaml')
+    if use_schema_string:
+        with io.open(schema_path, encoding='utf-8') as f:
+            schema = yamale.make_schema(content=f.read())
+    else:
+        schema = yamale.make_schema(schema_path)
+    if use_data_string:
+        with io.open(data_path, encoding='utf-8') as f:
+            data = yamale.make_data(content=f.read())
+    else:
+        data = yamale.make_data(data_path)
+    with pytest.raises(yamale.yamale_error.YamaleError) as excinfo:
+        yamale.validate(schema, data)
+    assert re.match(expected_message_re, excinfo.value.message, re.MULTILINE), \
+        'Message {} should match {}'.format(
+            excinfo.value.message, expected_message_re
+        )
+
+
 def match_exception_lines(schema, data, expected, strict=False):
     with pytest.raises(ValueError) as e:
-        assert yamale.validate(schema, data, strict)
+        yamale.validate(schema, data, strict)
 
-    message = str(e.value)
-    # only match the actual error message and remove the leading \t
-    got = set(s.lstrip() for s in message.split('\n') if s.startswith('\t'))
-    expected = set(expected)
+    got = e.value.results[0].errors
+    got.sort()
+    expected.sort()
     assert got == expected
 
 
 def count_exception_lines(schema, data, strict=False):
-    try:
+    with pytest.raises(ValueError) as e:
         yamale.validate(schema, data, strict)
-    except ValueError as exp:
-        message = str(exp)
-        count = len(message.split('\n'))
-        return count
-    raise Exception("Data valid")
+    result = e.value.results[0]
+    return len(result.errors)
